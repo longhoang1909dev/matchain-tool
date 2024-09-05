@@ -157,6 +157,23 @@ class Matchain {
             this.log('Không thể hoàn thành quiz hàng ngày', 'warning');
         }
 		
+		const taskStatus = await this.checkDailyTaskStatus();
+		if (taskStatus) {
+			if (taskStatus.dailyNeedsPurchase) {
+				try {
+					const boosterResult = await this.buyBooster(token, this.userid);
+					if (boosterResult.code === 400) {
+						this.log('Bạn đã thực hiện mua booster trước đó, thử lại sau!', 'warning');
+					} else if (boosterResult) {
+						this.log('Mua thành công Daily Booster', 'success');
+					}
+				} catch (error) {
+					console.error('Error buying booster:', error);
+					this.log('Lỗi khi mua Daily Booster', 'error');
+				}
+			}
+		}
+		
         let next_claim = 0;
         while (true) {
             const rewardUrl = "https://tgapp-api.matchain.io/api/tgapp/v1/point/reward";
@@ -201,6 +218,14 @@ class Matchain {
             await this.completeTask(user['id'], taskType, proxy);
         }
     
+		const updatedTaskStatus = await this.checkDailyTaskStatus();
+		if (updatedTaskStatus && updatedTaskStatus.gameNeedsPurchase) {
+			const ticketResult = await this.buyTicket(token, this.userid);
+			if (ticketResult) {
+				this.log('Mua thành công Game Ticket', 'success');
+			}
+		}
+	
 		const gameRuleUrl = "https://tgapp-api.matchain.io/api/tgapp/v1/game/rule";
 		let gameRuleRes = await this.http(gameRuleUrl, this.headers, null, proxy);
 		if (gameRuleRes.status !== 200) {
@@ -348,6 +373,77 @@ class Matchain {
         }
     }
 
+	async buyTicket(token, userId) {
+		const url = 'https://tgapp-api.matchain.io/api/tgapp/v1/daily/task/purchase';
+		const headers = {
+			...this.headers,
+			'Authorization': token
+		};
+		const payload = {
+			"uid": userId,
+			"type": "game"
+		};
+
+		try {
+			const response = await this.http(url, headers, JSON.stringify(payload), this.proxy);
+			return response.data;
+		} catch (error) {
+			if (error.response && error.response.status === 401) {
+				this.log("JSON Decode Error: Token Invalid", 'error');
+			} else {
+				this.log(`Request Error: ${error.message}`, 'error');
+			}
+			return null;
+		}
+	}
+
+	async buyBooster(token, userId) {
+		const url = 'https://tgapp-api.matchain.io/api/tgapp/v1/daily/task/purchase';
+		const headers = {
+			...this.headers,
+			'Authorization': token
+		};
+		const payload = {
+			"uid": userId,
+			"type": "daily"
+		};
+
+		try {
+			const response = await this.http(url, headers, JSON.stringify(payload), this.proxy);
+			return response.data;
+		} catch (error) {
+			if (error.response && error.response.status === 401) {
+				this.log("JSON Decode Error: Token Invalid", 'error');
+			} else {
+				this.log(`Request Error: ${error.message}`, 'error');
+			}
+			return null;
+		}
+	}
+
+	async checkDailyTaskStatus() {
+		const url = "https://tgapp-api.matchain.io/api/tgapp/v1/daily/task/status";
+		try {
+			const response = await this.http(url, this.headers, null, this.proxy);
+			if (response.status !== 200 || !response.data || !response.data.data) {
+				this.log('Lỗi khi kiểm tra trạng thái nhiệm vụ hàng ngày', 'error');
+				return null;
+			}
+
+			const taskData = response.data.data;
+			const dailyTask = taskData.find(task => task.type === 'daily');
+			const gameTask = taskData.find(task => task.type === 'game');
+
+			return {
+				dailyNeedsPurchase: dailyTask && dailyTask.current_count < dailyTask.task_count,
+				gameNeedsPurchase: gameTask && gameTask.current_count < gameTask.task_count
+			};
+		} catch (error) {
+			this.log(`Lỗi khi kiểm tra trạng thái nhiệm vụ: ${error.message}`, 'error');
+			return null;
+		}
+	}
+
     async main() {
         const args = require('minimist')(process.argv.slice(2));
         if (!args['--marin']) {
@@ -375,18 +471,20 @@ class Matchain {
                     this.log('Không thể phân tích JSON', 'error');
                     continue;
                 }
-                let proxyIP = '';
-                try {
-                    proxyIP = await this.checkProxyIP(proxy);
-                } catch (error) {
-                    console.error('Lỗi khi kiểm tra IP của proxy:', error);
-                }
-                console.log(`========== Tài khoản ${no + 1} | ${user['first_name'].green} | IP: ${proxyIP} ==========`);
-                const result = await this.login(item, proxy);
-                if (!result) continue;
-
-                list_countdown.push(result);
-                await this.countdown(3);
+				let proxyIP = '';
+				try {
+					proxyIP = await this.checkProxyIP(proxy);
+					console.log(`========== Tài khoản ${no + 1} | ${user['first_name'].green} | IP: ${proxyIP} ==========`);
+					const result = await this.login(item, proxy);
+					if (result) {
+						list_countdown.push(result);
+						await this.countdown(3);
+					}
+				} catch (error) {
+					this.log(`Lỗi proxy cho tài khoản ${no + 1}: ${error.message}`, 'error');
+					this.log('Chuyển sang tài khoản tiếp theo...', 'warning');
+					continue;
+				}
             }
 
             const end = Math.floor(Date.now() / 1000);
